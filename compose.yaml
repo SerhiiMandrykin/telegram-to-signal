@@ -9,11 +9,13 @@ services:
     volumes:
       - signal-cli:/var/lib/signal-cli
       - media:/media
+      # Separate volume for attachments, shared with telegram-app
+      - signal-attachments:/var/lib/signal-cli/attachments
     tmpfs:
       - "/tmp:exec"
     networks:
       - app
-  
+
   telegram-app:
     build:
       context: .
@@ -22,6 +24,8 @@ services:
       - ./config.json:/app/config.json
       - telegram-session:/tg-session
       - media:/media
+      # Mount signal attachments (read-only) to forward Signal images to Telegram
+      - signal-attachments:/signal-attachments:ro
     env_file:
       - .env
     depends_on:
@@ -32,6 +36,7 @@ services:
 
 volumes:
   signal-cli:
+  signal-attachments:
   media:
   telegram-session:
 

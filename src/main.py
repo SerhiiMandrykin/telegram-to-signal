@@ -9,6 +9,7 @@ from telethon import TelegramClient, events
 import config
 import markdown_converter
 from signal_group import create_signal_group
+from signal_listener import SignalSSEListener
 
 logging.basicConfig(format='[%(levelname)s %(asctime)s] %(name)s: %(message)s',
                     level=logging.INFO)
@@ -20,6 +21,15 @@ signal_json_rcp = os.environ['SIGNAL_REQUEST_URL']
 enable_channels = os.environ['ENABLE_CHANNELS'] == '1'
 default_group_expiration_days = int(os.environ.get('DEFAULT_GROUP_MSG_RETENTION_DAYS', '31'))
 default_group_member = os.environ['DEFAULT_GROUP_MEMBER']
+
+# Signal to Telegram settings
+enable_signal_to_telegram = os.environ.get('ENABLE_SIGNAL_TO_TELEGRAM', '0') == '1'
+signal_events_url = os.environ['SIGNAL_EVENTS_URL'] if enable_signal_to_telegram else None
+
+# Path where signal-cli stores received attachments.
+# A dedicated signal-attachments volume is mounted here (shared between signal-cli and telegram-app).
+# When Signal sends an attachment, it's saved to this path and we read it to forward to Telegram.
+signal_attachments_path = '/signal-attachments'
 
 config_data = config.get_config()
 
@@ -37,6 +47,7 @@ client = TelegramClient('/tg-session/session', api_id, api_hash, loop=loop)
 
 to_send_queue = asyncio.Queue()
 group_creation_queue = asyncio.Queue()
+telegram_send_queue = asyncio.Queue()  # Queue for Signal -> Telegram messages
 pending_messages = {}  # chat_id -> list of (item_type, item) waiting for group creation
 groups_being_created = set()  # chat_ids currently being processed for group creation
 
@@ -253,8 +264,95 @@ async def process_group_creation_queue():
         await asyncio.sleep(1)
 
 
+async def handle_signal_message(message_info: dict):
+    """Handle incoming Signal message and queue for Telegram sending."""
+    group_id = message_info['group_id']
+    message = message_info.get('message', '')
+    attachments = message_info.get('attachments', [])
+
+    # Skip messages with no content (no text and no attachments)
+    if not message and not attachments:
+        logger.debug('Ignoring empty Signal message (no text, no attachments)')
+        return
+
+    # Look up corresponding Telegram chat
+    lookup = config.get_telegram_chat_id(group_id)
+    if not lookup:
+        logger.debug('No Telegram mapping for Signal group %s', group_id)
+        return
+
+    chat_id, is_channel = lookup
+
+    # Queue for sending to Telegram
+    telegram_send_queue.put_nowait({
+        'chat_id': int(chat_id),
+        'is_channel': is_channel,
+        'message': message,
+        'sender_name': message_info.get('sender_name', ''),
+        'attachments': attachments,
+    })
+    logger.info('Queued Signal message for Telegram chat %s (attachments: %d)', chat_id, len(attachments))
+
+
+async def process_telegram_send_queue():
+    """Process queue of messages to send to Telegram."""
+    while True:
+        item = await telegram_send_queue.get()
+
+        try:
+            chat_id = item['chat_id']
+            message = item['message']
+            attachments = item.get('attachments', [])
+
+            # Build list of attachment file paths.
+            # Signal-cli stores attachments with their ID as filename in the attachments directory.
+            # The attachment object contains 'id' field which is the filename (e.g., "S0Fy8qTlVSanwJ1UJB7n.jpeg").
+            attachment_paths = []
+            for attachment in attachments:
+                attachment_id = attachment.get('id')
+                if attachment_id:
+                    file_path = os.path.join(signal_attachments_path, attachment_id)
+                    if os.path.exists(file_path):
+                        attachment_paths.append(file_path)
+                        logger.info('Found Signal attachment: %s', file_path)
+                    else:
+                        logger.warning('Signal attachment not found: %s', file_path)
+
+            # Send to Telegram with or without attachments
+            if attachment_paths:
+                # If multiple attachments, send as album (media group)
+                if len(attachment_paths) > 1:
+                    await client.send_file(chat_id, attachment_paths, caption=message or None)
+                    logger.info('Sent album with %d files to Telegram chat %s', len(attachment_paths), chat_id)
+                else:
+                    # Single attachment
+                    await client.send_file(chat_id, attachment_paths[0], caption=message or None)
+                    logger.info('Sent file to Telegram chat %s', chat_id)
+            elif message:
+                # Text-only message (no attachments)
+                await client.send_message(chat_id, message)
+                logger.info('Sent message to Telegram chat %s', chat_id)
+
+        except Exception as e:
+            logger.exception('Error sending to Telegram: %s', e)
+        finally:
+            telegram_send_queue.task_done()
+
+        await asyncio.sleep(0.5)
+
+
 async def main():
     logger.info('Start listening')
+
+    # Start Signal SSE listener if enabled
+    if enable_signal_to_telegram:
+        signal_listener = SignalSSEListener(
+            events_url=signal_events_url,
+            on_message=handle_signal_message
+        )
+        asyncio.create_task(signal_listener.start())
+        logger.info('Signal-to-Telegram forwarding enabled, SSE listener started')
+
     await client.run_until_disconnected()
 
 
@@ -263,4 +361,6 @@ if __name__ == '__main__':
     with client:
         client.loop.create_task(process_queue())
         client.loop.create_task(process_group_creation_queue())
+        if enable_signal_to_telegram:
+            client.loop.create_task(process_telegram_send_queue())
         client.loop.run_until_complete(main())

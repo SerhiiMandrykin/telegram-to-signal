@@ -6,6 +6,11 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
+# Optional prefix to prepend to Signal group names (e.g., "(Telegram)" -> "(Telegram) My Chat").
+# When set, helps users identify which Signal groups are bridged from Telegram.
+# If empty or unset, the original Telegram chat name is used as-is.
+GROUP_NAME_PREFIX = os.environ.get('GROUP_NAME_PREFIX', '').strip()
+
 
 async def create_signal_group(
     client,
@@ -27,6 +32,13 @@ async def create_signal_group(
 
     chat_title = getattr(entity, 'title', None) or getattr(entity, 'first_name', 'Unknown Chat')
     chat_username = getattr(entity, 'username', None)
+
+    # Apply optional prefix to group name (e.g., "(Telegram) My Chat").
+    # This helps users distinguish bridged groups from native Signal groups.
+    if GROUP_NAME_PREFIX:
+        group_name = f'{GROUP_NAME_PREFIX} {chat_title}'
+    else:
+        group_name = chat_title
 
     # Download profile photo if exists
     profile_pic_path = None
@@ -50,12 +62,12 @@ async def create_signal_group(
         "id": str(uuid.uuid4()),
         "method": "updateGroup",
         "params": {
-            "name": chat_title,
+            "name": group_name,
             "members": [default_group_member],
             "link": "enabled",
-            "setPermissionEditDetails": "onlyAdmins",
+            "setPermissionEditDetails": "everyMember",
             "setPermissionSendMessages": "everyMember",
-            "setPermissionAddMember": "onlyAdmins",
+            "setPermissionAddMember": "everyMember",
             "description": f"Telegram: {channel_link}",
             "expiration": default_group_expiration_days * 86400
         }
