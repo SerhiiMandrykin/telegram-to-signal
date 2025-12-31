@@ -122,6 +122,39 @@ async def process_queue():
         await asyncio.sleep(1)
 
 
+async def get_sender_name(msg) -> str | None:
+    """Get the sender's display name for group chat messages."""
+    if not msg.is_group:
+        return None
+
+    sender = await msg.get_sender()
+    if not sender:
+        return None
+
+    # Use first_name + last_name, or username, or fallback to user id
+    if hasattr(sender, 'first_name') and sender.first_name:
+        name = sender.first_name
+        if hasattr(sender, 'last_name') and sender.last_name:
+            name += f' {sender.last_name}'
+        return name
+    elif hasattr(sender, 'username') and sender.username:
+        return sender.username
+    elif hasattr(sender, 'id'):
+        return f'User {sender.id}'
+    return None
+
+
+def format_message_with_sender(text: str, sender_name: str | None) -> str:
+    """Format message with sender name prefix for group chats."""
+    if not sender_name:
+        return text or ''
+
+    if text:
+        return f'{sender_name}:\n{text}'
+    else:
+        return f'{sender_name}:'
+
+
 async def process_message(msg):
     logger.info('Start processing a simple message')
 
@@ -139,7 +172,11 @@ async def process_message(msg):
         logger.warning('No Signal group found for chat %s, skipping message', chat_id)
         return
 
-    parsed_text, styles = markdown_converter.convert_telegram_markdown(msg.text or '')
+    # Get sender name for group chats
+    sender_name = await get_sender_name(msg)
+    message_text = format_message_with_sender(msg.text or '', sender_name)
+
+    parsed_text, styles = markdown_converter.convert_telegram_markdown(message_text)
     payload = {
         "jsonrpc": "2.0",
         "id": str(uuid.uuid4()),
@@ -172,6 +209,7 @@ async def process_album(event):
     attachments = []
     message_text = ''
     chat_id = None
+    first_msg = None
 
     msg_list = event if isinstance(event, list) else event.messages
     for msg in msg_list:
@@ -181,6 +219,9 @@ async def process_album(event):
 
         if not chat_id:
             chat_id = str(msg.chat_id)
+
+        if not first_msg:
+            first_msg = msg
 
         if msg.photo or msg.video:
             logger.info('The message has media. Downloading...')
@@ -193,7 +234,11 @@ async def process_album(event):
         logger.warning('No Signal group found for chat %s, skipping album', chat_id)
         return
 
-    parsed_text, styles = markdown_converter.convert_telegram_markdown(message_text or '')
+    # Get sender name for group chats (use first message to get sender)
+    sender_name = await get_sender_name(first_msg) if first_msg else None
+    message_text = format_message_with_sender(message_text or '', sender_name)
+
+    parsed_text, styles = markdown_converter.convert_telegram_markdown(message_text)
     payload = {
         "jsonrpc": "2.0",
         "id": str(uuid.uuid4()),
