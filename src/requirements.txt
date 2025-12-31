@@ -1,0 +1,4 @@
+telethon
+prettytable
+asyncio
+aiohttp

@@ -1,0 +1,8 @@
+{
+    "chats": {
+        "tgChatId": "signalGroupId"
+    },
+    "channels": {
+        "tgChannelId": "signalGroupId"
+    }
+}

@@ -1,0 +1,39 @@
+services:
+  signal-cli:
+    image: registry.gitlab.com/packaging/signal-cli/signal-cli-native:latest
+    command: --config /var/lib/signal-cli daemon --http 0.0.0.0:7583
+    user: root
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - signal-cli:/var/lib/signal-cli
+      - media:/media
+    tmpfs:
+      - "/tmp:exec"
+    networks:
+      - app
+  
+  telegram-app:
+    build:
+      context: .
+      dockerfile: build/telegram-app/Dockerfile
+    volumes:
+      - ./config.json:/app/config.json
+      - telegram-session:/tg-session
+      - media:/media
+    env_file:
+      - .env
+    depends_on:
+      - signal-cli
+    restart: always
+    networks:
+      - app
+
+volumes:
+  signal-cli:
+  media:
+  telegram-session:
+
+networks:
+  app:
