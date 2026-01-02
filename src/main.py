@@ -4,11 +4,11 @@ import os
 
 from telethon import TelegramClient
 
-import queue_manager
-import telegram_handlers
-import telegram_to_signal
-import signal_to_telegram
-from signal_listener import SignalSSEListener
+from core import queue_manager
+from handlers import telegram_handlers
+from core import telegram_to_signal
+from core import signal_to_telegram
+from handlers.signal_listener import SignalSSEListener
 
 logging.basicConfig(format='[%(levelname)s %(asctime)s] %(name)s: %(message)s',
                     level=logging.INFO)
@@ -21,6 +21,10 @@ signal_json_rcp = os.environ['SIGNAL_REQUEST_URL']
 enable_channels = os.environ['ENABLE_CHANNELS'] == '1'
 default_group_expiration_days = int(os.environ.get('DEFAULT_GROUP_MSG_RETENTION_DAYS', '31'))
 default_group_member = os.environ['DEFAULT_GROUP_MEMBER']
+
+# Read message settings
+enable_read_messages = os.environ.get('ENABLE_READ_MESSAGES', '1') == '1'
+enable_read_channels = os.environ.get('ENABLE_READ_CHANNELS', '1') == '1'
 
 # Signal to Telegram settings
 enable_signal_to_telegram = os.environ.get('ENABLE_SIGNAL_TO_TELEGRAM', '0') == '1'
@@ -35,7 +39,10 @@ client = TelegramClient('/tg-session/session', api_id, api_hash, loop=loop)
 
 # Initialize queues and register handlers
 queue_manager.init_queues()
-telegram_handlers.register_handlers(client, queue_manager.queue_or_create_group, enable_channels)
+telegram_handlers.register_handlers(
+    client, queue_manager.queue_or_create_group, enable_channels,
+    enable_read_messages, enable_read_channels
+)
 
 
 async def main():
@@ -43,9 +50,12 @@ async def main():
 
     # Start Signal SSE listener if enabled
     if enable_signal_to_telegram:
+        async def on_signal_message(message_info: dict):
+            await signal_to_telegram.handle_signal_message(message_info, signal_json_rcp)
+
         signal_listener = SignalSSEListener(
             events_url=signal_events_url,
-            on_message=signal_to_telegram.handle_signal_message
+            on_message=on_signal_message
         )
         asyncio.create_task(signal_listener.start())
         logger.info('Signal-to-Telegram forwarding enabled, SSE listener started')

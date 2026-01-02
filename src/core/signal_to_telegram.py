@@ -1,15 +1,43 @@
 import asyncio
 import logging
 import os
+import uuid
+
+import aiohttp
 
 import config
-import queue_manager
-from media import convert_m4a_to_ogg_opus, cleanup_files
+from core import queue_manager
+from media.converter import convert_m4a_to_ogg_opus, cleanup_files
 
 logger = logging.getLogger(__name__)
 
 
-async def handle_signal_message(message_info: dict):
+async def send_read_receipt(signal_json_rpc: str, recipient: str, timestamp: int):
+    """Send a read receipt to Signal for a received message."""
+    payload = {
+        "jsonrpc": "2.0",
+        "id": str(uuid.uuid4()),
+        "method": "sendReceipt",
+        "params": {
+            "recipient": recipient,
+            "targetTimestamp": timestamp,
+            "type": "read"
+        }
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(signal_json_rpc, json=payload) as resp:
+                if resp.status == 200:
+                    logger.debug('Sent read receipt for message from %s at %d', recipient, timestamp)
+                else:
+                    text = await resp.text()
+                    logger.warning('Failed to send read receipt: status=%d, body=%s', resp.status, text)
+    except Exception as e:
+        logger.warning('Error sending read receipt: %s', e)
+
+
+async def handle_signal_message(message_info: dict, signal_json_rpc: str):
     """Handle incoming Signal message and queue for Telegram sending."""
     group_id = message_info['group_id']
     message = message_info.get('message', '')
@@ -28,13 +56,18 @@ async def handle_signal_message(message_info: dict):
 
     chat_id, is_channel = lookup
 
-    # Queue for sending to Telegram
+    # Queue for sending to Telegram (include info for read receipt)
     queue_manager.telegram_send_queue.put_nowait({
         'chat_id': int(chat_id),
         'is_channel': is_channel,
         'message': message,
         'sender_name': message_info.get('sender_name', ''),
         'attachments': attachments,
+        # Info for sending read receipt after forwarding
+        'signal_json_rpc': signal_json_rpc,
+        'sender_number': message_info.get('sender_number', ''),
+        'sender_uuid': message_info.get('sender_uuid', ''),
+        'timestamp': message_info.get('timestamp', 0),
     })
     logger.info('Queued Signal message for Telegram chat %s (attachments: %d)', chat_id, len(attachments))
 
@@ -110,6 +143,13 @@ async def process_telegram_send_queue(client, signal_attachments_path: str, send
                 # Text-only message (no attachments)
                 await client.send_message(chat_id, message)
                 logger.info('Sent message to Telegram chat %s', chat_id)
+
+            # Send read receipt to Signal after successfully forwarding
+            signal_json_rpc = item.get('signal_json_rpc')
+            sender = item.get('sender_uuid') or item.get('sender_number')
+            timestamp = item.get('timestamp')
+            if signal_json_rpc and sender and timestamp:
+                await send_read_receipt(signal_json_rpc, sender, timestamp)
 
         except Exception as e:
             logger.exception('Error sending to Telegram: %s', e)

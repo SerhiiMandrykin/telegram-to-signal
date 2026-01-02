@@ -5,11 +5,11 @@ import uuid
 import aiohttp
 
 import config
-import markdown_converter
-import queue_manager
-from media import convert_ogg_to_m4a, cleanup_files
-from message_formatter import get_sender_name, format_message_with_sender
-from signal_group import create_signal_group
+from formatters.markdown_converter import convert_telegram_markdown
+from core import queue_manager
+from media.converter import convert_ogg_to_m4a, cleanup_files
+from formatters.message_formatter import get_sender_name, format_message_with_sender
+from utils.signal_group import create_signal_group
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ async def process_message(msg, client, signal_json_rcp: str):
     sender_name = await get_sender_name(msg)
     message_text = format_message_with_sender(msg.text or '', sender_name)
 
-    parsed_text, styles = markdown_converter.convert_telegram_markdown(message_text)
+    parsed_text, styles = convert_telegram_markdown(message_text)
     payload = {
         "jsonrpc": "2.0",
         "id": str(uuid.uuid4()),
@@ -103,7 +103,6 @@ async def process_album(event, client, signal_json_rcp: str):
 
     msg_list = event if isinstance(event, list) else event.messages
     for msg in msg_list:
-        await msg.mark_read()
         if not message_text and msg.text:
             message_text = msg.text
 
@@ -128,7 +127,7 @@ async def process_album(event, client, signal_json_rcp: str):
     sender_name = await get_sender_name(first_msg) if first_msg else None
     message_text = format_message_with_sender(message_text or '', sender_name)
 
-    parsed_text, styles = markdown_converter.convert_telegram_markdown(message_text)
+    parsed_text, styles = convert_telegram_markdown(message_text)
     payload = {
         "jsonrpc": "2.0",
         "id": str(uuid.uuid4()),

@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-import config
+from config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ def init_queues() -> None:
     telegram_send_queue = asyncio.Queue()
     pending_messages = {}
     groups_being_created = set()
-    _config_data = config.get_config()
+    _config_data = get_config()
 
 
 def get_signal_group_id(chat_id: str) -> str | None:
