@@ -46,3 +46,20 @@ docker compose up -d
 # Podman
 podman compose up -d
 ```
+
+<details>
+<summary>Podman: Enable automatic container restart</summary>
+
+Podman is daemonless, so `restart: always` requires additional setup:
+
+```bash
+# Enable the user-level restart service
+systemctl --user enable --now podman-restart.service
+
+# Allow services to run when logged out
+sudo loginctl enable-linger $USER
+```
+
+Without this, containers won't restart automatically after exiting or rebooting.
+
+</details>
