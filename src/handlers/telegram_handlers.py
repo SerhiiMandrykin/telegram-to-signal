@@ -2,6 +2,8 @@ import logging
 
 from telethon import events
 
+from utils.notifications import is_channel_muted
+
 logger = logging.getLogger(__name__)
 
 
@@ -22,6 +24,11 @@ def register_handlers(
 
         if is_channel and not enable_channels:
             logger.debug('Skipping album from channel (not enabled)')
+            return
+
+        # Only monitor unmuted channels
+        if is_channel and await is_channel_muted(client, event.chat_id):
+            logger.debug('Skipping album from muted channel %s', event.chat_id)
             return
 
         # Mark album messages as read based on settings
@@ -45,6 +52,11 @@ def register_handlers(
 
         if is_channel and not enable_channels:
             logger.debug('Skipping message from channel (not enabled)')
+            return
+
+        # Only monitor unmuted channels
+        if is_channel and await is_channel_muted(client, msg.chat_id):
+            logger.debug('Skipping message from muted channel %s', msg.chat_id)
             return
 
         # Skip grouped messages (albums) - handled by album_handler
