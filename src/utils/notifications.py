@@ -1,13 +1,10 @@
 import logging
-import time
+from datetime import datetime, timezone
 
 from telethon.tl.functions.account import GetNotifySettingsRequest
 from telethon.tl.types import InputNotifyPeer
 
 logger = logging.getLogger(__name__)
-
-# Special value meaning "muted forever" in Telegram
-MUTE_FOREVER = 2147483647
 
 
 async def is_channel_muted(client, channel_id: int) -> bool:
@@ -23,13 +20,15 @@ async def is_channel_muted(client, channel_id: int) -> bool:
         ))
 
         mute_until = settings.mute_until
-        if mute_until is None or mute_until == 0:
+        if mute_until is None:
             is_muted = False
-        elif mute_until == MUTE_FOREVER:
-            is_muted = True
+        elif isinstance(mute_until, datetime):
+            # Telethon converts the timestamp to datetime
+            # Check if mute is still active (mute_until in the future)
+            is_muted = mute_until > datetime.now(timezone.utc)
         else:
-            # Temporary mute - check if it's still active
-            is_muted = mute_until > int(time.time())
+            # Fallback for integer timestamp (0 = not muted)
+            is_muted = mute_until > 0
 
         logger.debug('Channel %s mute status: %s (mute_until=%s)',
                      channel_id, is_muted, mute_until)
